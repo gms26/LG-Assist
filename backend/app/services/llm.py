@@ -26,6 +26,19 @@ CLOUD_CHAT_URLS = {
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 }
 
+# The documented free cloud option (item 4). Groq's free tier is the default
+# because it serves the same OpenAI-compatible protocol as the alternates;
+# switch LGA_CLOUD_CHAT_MODEL for the others.
+DEFAULT_CLOUD_MODELS = {
+    "groq": "llama-3.3-70b-versatile",
+    "gemini": "gemini-2.0-flash",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+}
+
+
+class ProviderUnavailable(Exception):
+    """The model provider (Ollama or cloud) could not serve the request."""
+
 
 def resolve_provider(settings: Settings) -> dict:
     """Return the effective provider state for /config/model.
@@ -85,16 +98,20 @@ def stream_chat_ollama(
                 break
 
 
-def stream_chat_cloud(settings: Settings, messages: list[dict]) -> Iterator[str]:
+def stream_chat_cloud(
+    settings: Settings, messages: list[dict], timeout_s: float | None = None
+) -> Iterator[str]:
     """Yield text chunks from an OpenAI-compatible cloud endpoint (streaming)."""
     url = CLOUD_CHAT_URLS[settings.effective_provider]
+    model = settings.cloud_chat_model or DEFAULT_CLOUD_MODELS[settings.effective_provider]
     payload = {
-        "model": settings.cloud_chat_model,
+        "model": model,
         "messages": messages,
         "stream": True,
     }
     headers = {"Authorization": f"Bearer {settings.cloud_api_key}"}
-    with httpx.stream("POST", url, json=payload, headers=headers, timeout=60.0) as resp:
+    with httpx.stream("POST", url, json=payload, headers=headers,
+                      timeout=timeout_s or 60.0) as resp:
         resp.raise_for_status()
         for line in resp.iter_lines():
             if not line.startswith("data:"):
@@ -107,3 +124,39 @@ def stream_chat_cloud(settings: Settings, messages: list[dict]) -> Iterator[str]
             delta = json.loads(data)["choices"][0]["delta"]
             if delta.get("content"):
                 yield delta["content"]
+
+
+def generate_stream(
+    settings: Settings, messages: list[dict], timeout_s: float | None = None
+) -> Iterator[tuple[str, str]]:
+    """Yield ("token", text) chunks, optionally preceded by ("notice", msg).
+
+    Uses the resolved active provider. If a cloud call fails mid-request,
+    falls back to Ollama and emits a notice first (contract: the frontend
+    shows "fell back to local model"). Raises ProviderUnavailable when
+    Ollama itself cannot serve.
+    """
+    active = resolve_provider(settings)["active"]
+    try:
+        streamer = stream_chat_ollama if active == "ollama" else stream_chat_cloud
+        for chunk in streamer(settings, messages, timeout_s):
+            yield ("token", chunk)
+    except Exception as exc:
+        if active == "ollama":
+            raise ProviderUnavailable(f"ollama unavailable: {type(exc).__name__}") from exc
+        try:
+            yield ("notice", "fell back to local model")
+            for chunk in stream_chat_ollama(settings, messages, timeout_s):
+                yield ("token", chunk)
+        except Exception as exc2:
+            raise ProviderUnavailable(
+                f"cloud and ollama fallback failed: {type(exc2).__name__}"
+            ) from exc2
+
+
+def chat_once(settings: Settings, messages: list[dict], timeout_s: float = 20.0) -> str:
+    """Non-streaming chat via the active provider (used for rewrites)."""
+    return "".join(
+        payload for kind, payload in generate_stream(settings, messages, timeout_s)
+        if kind == "token"
+    )

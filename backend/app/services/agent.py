@@ -4,33 +4,47 @@ Emits the SSE event sequence for one user message as (event, data) tuples;
 the chat route formats them and owns persistence. Framework-agnostic on
 purpose — no FastAPI imports here.
 
-Current behavior (Phase 2/3 seams marked):
-  * skill routing: ``auto`` resolves to ``answer``; ``essay``/``artifact``
-    are accepted and reported via skill_used but generate through the same
-    grounded path until their skills land.
-  * retrieval: ``retrieve()`` is the Phase 2 seam — it returns [] until the
-    transcript index exists.
-  * grounding rule (contract v1): when retrieval is empty or weak, the
-    assistant still returns a normal answer saying the transcripts don't
-    support it, with an empty sources list and a ``notice`` event. This is
-    NOT an error.
-
-Phase 2 will fill retrieve(); Phase 3 will add real generation behind the
-token events (Ollama streaming via services/llm).
+Turn pipeline (items 3+4):
+  1. skill routing: ``auto`` resolves to ``answer`` (item 5 adds the real
+     essay/artifact skills once the Ship 30 principles arrive).
+  2. config-time fallback notice: if a cloud provider was requested but no
+     key is configured, the turn starts with "fell back to local model".
+  3. follow-up rewriting: the question is rewritten into standalone form
+     from recent session history (degrades to the raw question).
+  4. retrieval: top-k transcript chunks with citations; hits below
+     LGA_RETRIEVAL_MIN_SCORE are dropped.
+  5. grounding rule (contract v1): empty/weak retrieval -> a normal answer
+     saying the transcripts don't support it, empty sources, a ``notice``
+     event. NOT an error — and it works even when the LLM is down.
+  6. grounded generation: the LLM answers ONLY from the retrieved excerpts,
+     streamed as token events; a runtime cloud failure falls back to Ollama
+     with a notice event (ProviderUnavailable -> the route's error event).
 """
 
 from collections.abc import Iterator
 
+from ..config import Settings, get_settings
 from ..models import ChatSession
 from ..schemas import Skill
+from .llm import generate_stream, resolve_provider
+from .retrieval import get_recent_history, retrieve, rewrite_followup
 
 NOTICE_NOT_SUPPORTED = "not supported by the transcripts"
+NOTICE_FALLBACK = "fell back to local model"
 
 NOT_SUPPORTED_MESSAGE = (
     "I don't have transcript material that supports an answer to that yet. "
-    "The knowledge base hasn't been ingested in this deployment, so I can't "
-    "ground a reply in Lenny's episodes. Once transcripts are loaded, I'll "
-    "cite the exact episodes I draw on."
+    "I searched Lenny's podcast transcripts and nothing relevant came back, "
+    "so I can't ground a reply. Try asking about product strategy, growth, "
+    "pricing, hiring, or another topic covered in the episodes."
+)
+
+GROUNDED_SYSTEM = (
+    "You are the Lenny Growth Assistant. Answer the user's product and growth "
+    "question using ONLY the transcript excerpts below. Every substantive claim "
+    "must be grounded in an excerpt — cite the episode title inline like "
+    "(Episode: \"...\"). If the excerpts don't actually support an answer, say "
+    "so plainly instead of inventing. Keep the answer focused and skimmable."
 )
 
 
@@ -41,15 +55,17 @@ def resolve_skill(requested: Skill) -> str:
     return requested.value
 
 
-def retrieve(db, chat_session: ChatSession, content: str, top_k: int = 6) -> list[dict]:
-    """Phase 2 seam: top-k transcript chunks with source info.
-
-    Returns [] until the ingestion pipeline populates transcript_chunks.
-    Each hit will look like:
-      {"episode": ..., "guest": ..., "source_url": ..., "source_file": ...,
-       "excerpt": ..., "relevance": 0.87}
-    """
-    return []
+def build_grounded_messages(question: str, hits: list[dict]) -> list[dict]:
+    excerpts = "\n\n".join(
+        f"[{i + 1}] (Episode: \"{h['episode']}\""
+        + (f", Guest: {h['guest']}" if h.get("guest") else "")
+        + f")\n{h['text']}"
+        for i, h in enumerate(hits)
+    )
+    return [
+        {"role": "system", "content": GROUNDED_SYSTEM},
+        {"role": "user", "content": f"Transcript excerpts:\n{excerpts}\n\nQuestion: {question}"},
+    ]
 
 
 def _chunk_text(text: str, words_per_chunk: int = 12) -> Iterator[str]:
@@ -60,29 +76,62 @@ def _chunk_text(text: str, words_per_chunk: int = 12) -> Iterator[str]:
 
 
 def run_turn(
-    db, chat_session: ChatSession, content: str, skill: Skill
+    db,
+    chat_session: ChatSession,
+    content: str,
+    skill: Skill,
+    settings: Settings | None = None,
 ) -> Iterator[tuple[str, dict]]:
     """Yield (event, data) for the contract v1 streaming protocol.
 
     The route intercepts the ``done`` event to attach the persisted
-    assistant message id before sending it.
+    assistant message id before sending it. Raises ProviderUnavailable
+    when no model can serve (the route turns it into an error event).
     """
+    settings = settings or get_settings()
     skill_used = resolve_skill(skill)
 
-    sources = retrieve(db, chat_session, content)
+    # Config-time fallback: cloud requested but unusable -> notice up front.
+    if resolve_provider(settings)["fallback_in_effect"]:
+        yield ("notice", {"message": NOTICE_FALLBACK})
 
-    if not sources:
-        # Contract behavior rule: unsupported != error.
+    # Follow-up rewriting from session history (the current user message was
+    # saved before this runs, so drop it from the history window).
+    question = content
+    if settings.rewrite_enabled:
+        history = get_recent_history(db, chat_session.id)
+        if history and history[-1]["role"] == "user" and history[-1]["content"] == content:
+            history = history[:-1]
+        question = rewrite_followup(settings, history, content)
+
+    # Retrieval (raises ProviderUnavailable when embeddings are unreachable).
+    hits = retrieve(db, settings, question)
+
+    if not hits:
+        # Contract behavior rule: unsupported != error. Deterministic message,
+        # so this path works even with the LLM down.
         yield ("notice", {"message": NOTICE_NOT_SUPPORTED})
-    yield ("sources", {"sources": sources})
+        yield ("sources", {"sources": []})
+        for piece in _chunk_text(NOT_SUPPORTED_MESSAGE):
+            yield ("token", {"text": piece})
+        yield ("done", {"skill_used": skill_used})
+        return
 
-    # Generation seam (Phase 3): deterministic honest message until the
-    # grounded generation path exists. Streamed as token chunks so the
-    # frontend exercises the real streaming UX from day one.
-    for piece in _chunk_text(NOT_SUPPORTED_MESSAGE):
-        yield ("token", {"text": piece})
+    yield ("sources", {"sources": [
+        {k: h[k] for k in ("episode", "guest", "source_url", "source_file",
+                           "excerpt", "relevance", "chunk_id")}
+        for h in hits
+    ]})
 
-    # Artifact skill seam (Phase 3): an "artifact" event carrying the full
-    # artifact will be yielded here when generation supports it.
+    # Grounded generation, streamed. Runtime cloud failure -> Ollama fallback
+    # with a notice; Ollama failure -> ProviderUnavailable -> error event.
+    for kind, payload in generate_stream(settings, build_grounded_messages(question, hits)):
+        if kind == "notice":
+            yield ("notice", {"message": payload})
+        else:
+            yield ("token", {"text": payload})
+
+    # Artifact skill seam (item 5): an "artifact" event carrying the full
+    # artifact will be yielded here once the skills land.
 
     yield ("done", {"skill_used": skill_used})

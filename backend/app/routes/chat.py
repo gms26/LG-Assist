@@ -22,9 +22,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..errors import ErrorCode
 from ..models import ChatSession, Message, User
 from ..schemas import SendMessageRequest
 from ..services.agent import run_turn
+from ..services.llm import ProviderUnavailable
 from ..services.sse import format_sse
 from ..services.users import get_current_user
 
@@ -77,6 +79,26 @@ def send_message(
                     db.refresh(assistant)
                     data["message_id"] = str(assistant.id)
                 yield format_sse(event, data)
+        except ProviderUnavailable as exc:
+            # Resilience (item 7): the model is down. Persist any partial
+            # turn, then end with a structured error event — never a 500
+            # mid-stream, never a hallucinated answer.
+            if text_parts:
+                db.add(
+                    Message(
+                        session_id=chat_session.id,
+                        role="assistant",
+                        content="".join(text_parts),
+                        sources=sources,
+                        skill_used=skill_used,
+                    )
+                )
+                db.commit()
+            yield format_sse(
+                "error",
+                {"code": ErrorCode.DEPENDENCY,
+                 "message": "The AI model is currently unavailable. Please try again shortly."},
+            )
         except Exception:
             # Persist the partial turn so it isn't lost, then end with a
             # structured error event (contract v1: error ends the stream).
@@ -93,7 +115,7 @@ def send_message(
                 db.commit()
             yield format_sse(
                 "error",
-                {"code": "internal_error", "message": "Generation failed mid-stream."},
+                {"code": ErrorCode.INTERNAL, "message": "Generation failed mid-stream."},
             )
 
     return StreamingResponse(
