@@ -1,0 +1,41 @@
+# Local dev stack for the LGA backend (kept inside /backend per repo rules;
+# the root-level compose for the full system is owned by the repo maintainer).
+#
+#   docker compose up --build
+#
+# Ollama is expected on the HOST (install from https://ollama.com, then
+# `ollama pull qwen2.5:7b` and `ollama pull nomic-embed-text`).
+# Inside the api container, host Ollama is reachable via host.docker.internal.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: lga
+      POSTGRES_PASSWORD: lga
+      POSTGRES_DB: lga
+    ports:
+      - "5432:5432"
+    volumes:
+      - lga_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lga -d lga"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LGA_APP_ENV: local
+      LGA_DATABASE_URL: postgresql+psycopg://lga:lga@db:5432/lga
+      LGA_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      LGA_CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  lga_pgdata:

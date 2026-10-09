@@ -1,0 +1,10 @@
+# Lenny Growth Assistant — backend dependencies.
+# Everything here is free / open-source. No paid API client is required.
+fastapi>=0.115,<0.118
+uvicorn[standard]>=0.30,<0.35
+pydantic>=2.7,<3
+pydantic-settings>=2.5,<3
+sqlalchemy>=2.0,<2.1
+psycopg[binary]>=3.1,<4
+pgvector>=0.3,<0.4
+httpx>=0.27,<0.29
