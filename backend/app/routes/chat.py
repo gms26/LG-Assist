@@ -32,6 +32,23 @@ from ..services.users import get_current_user
 
 router = APIRouter(tags=["chat"])
 
+TITLE_MAX_LEN = 60
+
+
+def make_title(content: str, max_len: int = TITLE_MAX_LEN) -> str | None:
+    """Shorten the first user message into a session title (contract v1.1).
+
+    No AI call — deterministic truncation at a word boundary, ~60 chars.
+    Returns None when there's nothing usable (whitespace-only content).
+    """
+    text = " ".join(content.split())
+    if not text:
+        return None
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len].rsplit(" ", 1)[0].rstrip()
+    return (cut or text[:max_len]) + "…"
+
 
 @router.post("/sessions/{session_id}/messages", summary="Send a message (SSE stream)")
 def send_message(
@@ -52,6 +69,20 @@ def send_message(
     db.add(Message(session_id=chat_session.id, role="user", content=body.content, sources=[]))
     chat_session.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    # Contract v1.1: first user message sets the session title (~60 chars,
+    # no AI call) — but never clobbers a title chosen at session creation.
+    if chat_session.title is None:
+        user_messages = (
+            db.query(Message)
+            .filter(Message.session_id == chat_session.id, Message.role == "user")
+            .count()
+        )
+        if user_messages == 1:
+            title = make_title(body.content)
+            if title:
+                chat_session.title = title
+                db.commit()
 
     def stream():
         text_parts: list[str] = []

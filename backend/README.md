@@ -86,7 +86,10 @@ creates the user row on first sight. Errors always use the envelope
 documented above.
 
 - `GET /health` — overall status plus separate `database` and `ollama` checks.
-- `POST /sessions` — new chat (`{title?}`) → session.
+- `POST /sessions` — new chat (`{title?}`) → session. Contract v1.1: when the
+  first user message is saved, an untitled session gets its title from that
+  message (~60 chars, no AI call); an explicitly chosen title is never
+  overwritten.
 - `GET /sessions` — list chats newest-first (`limit`, `offset`) → `{sessions, total}`.
 - `GET /sessions/{id}` — one chat → `{session, messages}` in order.
 - `DELETE /sessions/{id}` — remove chat → 204.
