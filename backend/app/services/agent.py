@@ -28,6 +28,8 @@ from ..models import ChatSession
 from ..schemas import Skill
 from .llm import generate_stream, resolve_provider
 from .retrieval import get_recent_history, retrieve, rewrite_followup
+from .skills.ship30 import run_essay_skill
+from .sse import chunk_text
 
 NOTICE_NOT_SUPPORTED = "not supported by the transcripts"
 NOTICE_FALLBACK = "fell back to local model"
@@ -68,13 +70,6 @@ def build_grounded_messages(question: str, hits: list[dict]) -> list[dict]:
     ]
 
 
-def _chunk_text(text: str, words_per_chunk: int = 12) -> Iterator[str]:
-    words = text.split(" ")
-    for i in range(0, len(words), words_per_chunk):
-        piece = " ".join(words[i : i + words_per_chunk])
-        yield piece + (" " if i + words_per_chunk < len(words) else "")
-
-
 def run_turn(
     db,
     chat_session: ChatSession,
@@ -104,6 +99,11 @@ def run_turn(
             history = history[:-1]
         question = rewrite_followup(settings, history, content)
 
+    # Item 5: Ship 30 essay skill — staged pipeline with its own retrieval.
+    if skill_used == Skill.essay.value:
+        yield from run_essay_skill(db, chat_session, question, settings)
+        return
+
     # Retrieval (raises ProviderUnavailable when embeddings are unreachable).
     hits = retrieve(db, settings, question)
 
@@ -112,7 +112,7 @@ def run_turn(
         # so this path works even with the LLM down.
         yield ("notice", {"message": NOTICE_NOT_SUPPORTED})
         yield ("sources", {"sources": []})
-        for piece in _chunk_text(NOT_SUPPORTED_MESSAGE):
+        for piece in chunk_text(NOT_SUPPORTED_MESSAGE):
             yield ("token", {"text": piece})
         yield ("done", {"skill_used": skill_used})
         return
