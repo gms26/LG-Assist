@@ -32,7 +32,7 @@ services:
       LGA_APP_ENV: local
       LGA_DATABASE_URL: postgresql+psycopg://lga:lga@db:5432/lga
       LGA_OLLAMA_BASE_URL: http://host.docker.internal:11434
-      LGA_CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      LGA_CORS_ORIGINS: http://localhost:5173
     depends_on:
       db:
         condition: service_healthy

@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    cors_origins: str = "http://localhost:5173"  # contract v1: frontend origin only
 
     # --- model provider ---
     provider: str = Field(default="ollama", description="ollama | groq | gemini | openrouter")

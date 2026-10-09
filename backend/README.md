@@ -60,15 +60,28 @@ tests/           # automated tests (phase 4)
 
 ## API
 
-- `GET /api/v1/health` — overall status plus separate `database` and `ollama` checks.
-- Session / chat / artifact endpoints: shapes are defined by the repo owner in
-  the shared contract; this backend implements them exactly once delivered.
+Contract v1 (`/api/v1`). IDs are UUIDs, timestamps ISO 8601 UTC. The
+frontend sends its stored UUID in the `X-User-Id` header; the backend
+creates the user row on first sight. Errors always use the envelope
+documented above.
 
-Errors always use the envelope:
+- `GET /health` — overall status plus separate `database` and `ollama` checks.
+- `POST /sessions` — new chat (`{title?}`) → session.
+- `GET /sessions` — list chats newest-first (`limit`, `offset`) → `{sessions, total}`.
+- `GET /sessions/{id}` — one chat → `{session, messages}` in order.
+- `DELETE /sessions/{id}` — remove chat → 204.
+- `POST /sessions/{id}/messages` — send `{content, skill?}` → SSE stream
+  (`notice | sources | token* | artifact? | done`, or `error` which ends the
+  stream). Unsupported questions return a normal answer with empty sources
+  and a `notice` — never an error.
+- `GET /config/model` — active provider, model names, available providers,
+  whether a fallback is in effect. The frontend never assumes a provider.
+- `GET /sessions/{id}/artifacts` — artifacts in a chat.
+- `GET /artifacts/{id}` — one artifact (stored exactly as generated; HTML is
+  untrusted and rendered only in a sandboxed iframe).
 
-```json
-{ "error": { "code": "validation_error", "message": "...", "details": [...], "request_id": "..." } }
-```
+Run the suite: `pytest tests/` (22 tests; DB-backed route tests land in
+Phase 4 with a real Postgres).
 
 ## Troubleshooting
 

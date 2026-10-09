@@ -9,7 +9,7 @@ from .config import get_settings
 from .db import init_db
 from .errors import register_exception_handlers
 from .middleware import RequestIDMiddleware
-from .routes import health
+from .routes import artifacts, chat, health, model, sessions
 
 settings = get_settings()
 
@@ -33,6 +33,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 app.add_middleware(RequestIDMiddleware)
@@ -46,8 +47,12 @@ app.add_middleware(
 
 register_exception_handlers(app)
 
-# NOTE: endpoint paths/shapes are provisional until the owner's contract lands.
+# API contract v1 endpoints. All paths/shapes follow the contract exactly.
 app.include_router(health.router, prefix="/api/v1")
+app.include_router(sessions.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")
+app.include_router(artifacts.router, prefix="/api/v1")
+app.include_router(model.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)
