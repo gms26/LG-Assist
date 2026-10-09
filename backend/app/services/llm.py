@@ -57,10 +57,15 @@ def resolve_provider(settings: Settings) -> dict:
 
 def provider_info(settings: Settings) -> dict:
     state = resolve_provider(settings)
+    active = state["active"]
+    if active == "ollama":
+        chat_model = settings.ollama_chat_model
+    else:
+        chat_model = settings.cloud_chat_model or DEFAULT_CLOUD_MODELS[active]
     return {
-        "active_provider": state["active"],
+        "active_provider": active,
         "configured_provider": settings.effective_provider,
-        "chat_model": settings.ollama_chat_model,
+        "chat_model": chat_model,
         "embed_model": settings.ollama_embed_model,
         "available_providers": list(SUPPORTED_PROVIDERS),
         "fallback_in_effect": state["fallback_in_effect"],

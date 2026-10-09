@@ -103,8 +103,9 @@ documented above.
 - `GET /artifacts/{id}` — one artifact (stored exactly as generated; HTML is
   untrusted and rendered only in a sandboxed iframe).
 
-Run the suite: `pytest tests/` (54 tests; DB-backed route tests land in
-Phase 4 with a real Postgres).
+Run the suite: `pytest tests/ -q` — 61 unit/resilience tests run anywhere;
+9 DB-backed API tests (`tests/test_api_db.py`) run against a real Postgres
++ pgvector (see FIRST_RUN.md §5) and skip otherwise.
 
 ### Skills
 

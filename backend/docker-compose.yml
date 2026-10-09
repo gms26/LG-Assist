@@ -33,9 +33,16 @@ services:
       LGA_DATABASE_URL: postgresql+psycopg://lga:lga@db:5432/lga
       LGA_OLLAMA_BASE_URL: http://host.docker.internal:11434
       LGA_CORS_ORIGINS: http://localhost:5173
+      LGA_DATA_DIR: /srv/app/data
+    volumes:
+      - lga_data:/srv/app/data
+    # host.docker.internal doesn't resolve on Linux Docker by default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   lga_pgdata:
+  lga_data:
