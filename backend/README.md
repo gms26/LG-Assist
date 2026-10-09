@@ -58,6 +58,26 @@ tests/           # automated tests (phase 4)
   backend-dev stack only — the repo-root compose (owner's) must not collide
   with it.
 
+## Knowledge base
+
+Transcripts come from Lenny's public starter pack
+([lennys-newsletterpodcastdata](https://github.com/LennysNewsletter/lennys-newsletterpodcastdata):
+50 podcast transcripts + 10 newsletter posts, with `index.json` metadata).
+Ingest with:
+
+```bash
+cd backend && python -m scripts.ingest_transcripts [--limit 50] [--include-newsletters] [--force] [--dry-run]
+```
+
+The script clones the source repo into `<repo>/data/lenny-transcripts` on
+first run (gitignored — raw files are never committed, per the
+starter-dataset license: free for personal/non-commercial use, no
+redistribution of raw files). Chunks are cut at speaker-turn boundaries
+(~450 words, 1-turn overlap), embedded with Ollama `nomic-embed-text`
+(768 dims, batched), and upserted into pgvector keyed by content hash, so
+re-running never duplicates. Attribution: transcripts © Lenny Rachitsky
+([lennysnewsletter.com](https://www.lennysnewsletter.com)).
+
 ## API
 
 Contract v1 (`/api/v1`). IDs are UUIDs, timestamps ISO 8601 UTC. The

@@ -1,0 +1,4 @@
+# Ingested / downloaded data lives here but is never committed.
+# (The Lenny starter-dataset license forbids redistributing the raw files.)
+*
+!.gitignore
