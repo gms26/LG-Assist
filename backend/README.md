@@ -46,6 +46,18 @@ app/
 tests/           # automated tests (phase 4)
 ```
 
+## Key decisions (fixed, changing them later is expensive)
+
+- **Embedding model: `nomic-embed-text` via Ollama, 768 dimensions.** The
+  pgvector column width is fixed at table creation, so switching embedding
+  models later means wiping `transcript_chunks` and re-ingesting everything
+  (the dedupe hash is text-based, so re-embedding would also need a hash
+  version bump). This choice is deliberate and documented here.
+- **Branch `back`** carries all backend work; the component directory is
+  `backend/`. The compose file at `backend/docker-compose.yml` is the
+  backend-dev stack only — the repo-root compose (owner's) must not collide
+  with it.
+
 ## API
 
 - `GET /api/v1/health` — overall status plus separate `database` and `ollama` checks.
