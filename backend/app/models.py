@@ -57,6 +57,30 @@ class ChatSession(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="Message.created_at"
     )
+    artifacts: Mapped[list["Artifact"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="Artifact.created_at"
+    )
+
+
+class Artifact(Base):
+    """A rendered artifact generated during a chat turn.
+
+    Stored EXACTLY as generated (contract rule). HTML is untrusted by
+    definition — the frontend renders it only inside a sandboxed iframe.
+    """
+
+    __tablename__ = "artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type: Mapped[str] = mapped_column(String(16), nullable=False)  # markdown | html
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+    session: Mapped[ChatSession] = relationship(back_populates="artifacts")
 
 
 class Message(Base):
@@ -71,11 +95,18 @@ class Message(Base):
     # citations attached to assistant messages, e.g.
     # [{"episode": "...", "guest": "...", "source_url": "...", "chunk_id": "...", "excerpt": "..."}]
     sources: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True
+    )
+    skill_used: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
+    )  # answer | essay | artifact (auto resolves to one of these)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, index=True
     )
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
+    artifact: Mapped[Artifact | None] = relationship()
 
 
 class TranscriptChunk(Base):
