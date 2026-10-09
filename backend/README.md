@@ -103,8 +103,29 @@ documented above.
 - `GET /artifacts/{id}` — one artifact (stored exactly as generated; HTML is
   untrusted and rendered only in a sandboxed iframe).
 
-Run the suite: `pytest tests/` (22 tests; DB-backed route tests land in
+Run the suite: `pytest tests/` (54 tests; DB-backed route tests land in
 Phase 4 with a real Postgres).
+
+### Skills
+
+`POST /sessions/{id}/messages` accepts `skill: auto | answer | essay | artifact`;
+`auto` resolves to `answer`. The essay skill (`ship30_essay`,
+`app/services/skills/ship30.py`) is a staged pipeline, not one prompt:
+
+1. core idea — one-sentence thesis from the retrieved chunks
+2. outline — hook angle, 4 sections each tied to source chunk indices,
+   word budgets, takeaway angle (deterministic fallback if the model
+   garbles the format)
+3. draft — hook, sections, and takeaway drafted separately, each grounded
+   only in its assigned excerpts
+4. check + revise — word-count check (1,250 ±10%) and grounding check
+   (every section cites ≥1 excerpt); exactly one revision pass
+5. assemble — markdown with hook, headings, bullets, selective bold, one
+   specific takeaway, and a source list
+
+Thin retrieval (< 4 usable chunks) yields a notice asking for a narrower
+topic instead of an essay. Stage progress is streamed as `notice` events.
+(The `artifact` skill lands with its own spec.)
 
 ## Troubleshooting
 
