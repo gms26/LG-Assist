@@ -15,7 +15,10 @@ def check_ollama(settings: Settings, timeout_s: float = 3.0) -> dict:
     """Return a status dict for the health endpoint's `ollama` check."""
     started = time.perf_counter()
     try:
-        resp = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=timeout_s)
+        # trust_env=False: Ollama is a local service and must never go through
+        # an egress proxy (in proxied/sandboxed networks the proxy breaks or
+        # leaks local calls; the failure mode is a confusing InvalidURL).
+        resp = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=timeout_s, trust_env=False)
         resp.raise_for_status()
         models = [m.get("name", "") for m in resp.json().get("models", [])]
         return {
