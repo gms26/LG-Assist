@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # --- retrieval ---
     vector_dim: int = 768  # nomic-embed-text output size
     retrieval_top_k: int = 6
+    retrieval_min_score: float = 0.4  # below this, transcripts "don't support" the answer
+    rewrite_enabled: bool = True  # rewrite follow-ups from session history
 
     @property
     def cors_origin_list(self) -> list[str]:
